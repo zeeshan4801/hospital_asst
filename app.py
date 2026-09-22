@@ -1,98 +1,103 @@
 import streamlit as st
 import os
 import subprocess
-import faiss
 import pickle
+import faiss
 import numpy as np
 
 from sentence_transformers import SentenceTransformer
 from openai import OpenAI
 
 
-# ==========================
-# Page Settings
-# ==========================
 
 st.set_page_config(
+
     page_title="Hospital AI Assistant",
+
     page_icon="🏥"
+
 )
+
 
 st.title("🏥 Hospital Knowledge Assistant")
 
-
-# ==========================
-# Build FAISS if missing
-# ==========================
-
-FAISS_PATH = "faiss_index/index.faiss"
-CHUNKS_PATH = "faiss_index/chunks.pkl"
+st.caption(
+    "Ask questions from hospital policy documents"
+)
 
 
-def create_database():
 
-    st.info("Creating knowledge base from PDFs...")
+FAISS_FILE = "faiss_index/index.faiss"
 
-    result = subprocess.run(
-        ["python", "ingest.py"],
-        capture_output=True,
-        text=True
-    )
+CHUNKS_FILE = "faiss_index/chunks.pkl"
 
-    if result.returncode != 0:
 
-        st.error(
-            "Ingestion failed:"
+
+# -------------------------
+# Create database if missing
+# -------------------------
+
+if not os.path.exists(FAISS_FILE):
+
+
+    with st.spinner(
+        "Building hospital knowledge base..."
+    ):
+
+
+        result = subprocess.run(
+
+            [
+                "python",
+                "ingest.py"
+            ],
+
+            capture_output=True,
+
+            text=True
+
         )
 
-        st.code(
-            result.stderr
-        )
-
-        st.stop()
 
 
-
-if not os.path.exists(FAISS_PATH):
-
-    create_database()
+        if result.returncode != 0:
 
 
+            st.error(
+                "Knowledge base creation failed"
+            )
 
-# After creation check again
 
-if not os.path.exists(FAISS_PATH):
+            st.code(
+                result.stderr
+            )
 
-    st.error(
-        """
-FAISS index was not created.
 
-Check:
-1. hospital_knowledge_base folder exists
-2. PDF files are uploaded
-3. ingest.py works
-"""
-    )
-
-    st.stop()
+            st.stop()
 
 
 
-# ==========================
-# Load Database
-# ==========================
+# -------------------------
+# Load database
+# -------------------------
 
 @st.cache_resource
 def load_database():
 
+
     index = faiss.read_index(
-        FAISS_PATH
+
+        FAISS_FILE
+
     )
 
 
     with open(
-        CHUNKS_PATH,
+
+        CHUNKS_FILE,
+
         "rb"
+
     ) as f:
 
         chunks = pickle.load(f)
@@ -100,7 +105,9 @@ def load_database():
 
 
     model = SentenceTransformer(
+
         "sentence-transformers/all-MiniLM-L6-v2"
+
     )
 
 
@@ -108,13 +115,14 @@ def load_database():
 
 
 
-index, chunks, model = load_database()
+
+index, chunks, embedding_model = load_database()
 
 
 
-# ==========================
-# Groq Client
-# ==========================
+# -------------------------
+# Groq
+# -------------------------
 
 client = OpenAI(
 
@@ -126,28 +134,32 @@ client = OpenAI(
 
 
 
-# ==========================
-# Search
-# ==========================
-
-def search_documents(question):
+def retrieve(question):
 
 
-    embedding = model.encode(
+    vector = embedding_model.encode(
+
         [question],
+
         normalize_embeddings=True
+
     )
 
 
-    embedding = np.array(
-        embedding
+    vector = np.array(
+
+        vector
+
     ).astype("float32")
 
 
 
     scores, ids = index.search(
-        embedding,
+
+        vector,
+
         5
+
     )
 
 
@@ -155,33 +167,42 @@ def search_documents(question):
 
 
     for score, idx in zip(
+
         scores[0],
+
         ids[0]
+
     ):
 
-        results.append(
-            chunks[idx]
-        )
+
+        results.append({
+
+            **chunks[idx],
+
+            "score":float(score)
+
+        })
+
 
 
     return results
 
 
 
-# ==========================
-# Generate Answer
-# ==========================
 
 def ask(question):
 
 
-    docs = search_documents(question)
+    docs = retrieve(question)
 
 
-    context=""
+
+    context = ""
+
 
 
     for d in docs:
+
 
         context += f"""
 
@@ -194,29 +215,45 @@ PAGE:
 CONTENT:
 {d['text']}
 
--------------------
+-----------------
 
 """
 
 
+
     response = client.chat.completions.create(
+
 
         model="openai/gpt-oss-120b",
 
+
         temperature=0.1,
+
 
         messages=[
 
-            {
-                "role":"system",
-                "content":
-                "Answer only from hospital documents."
-            },
 
             {
-                "role":"user",
-                "content":
-                f"""
+
+            "role":"system",
+
+            "content":
+            """
+You are a hospital policy assistant.
+Answer only from provided documents.
+Do not make assumptions.
+"""
+
+            },
+
+
+            {
+
+            "role":"user",
+
+            "content":
+            f"""
+
 Context:
 
 {context}
@@ -225,7 +262,9 @@ Context:
 Question:
 
 {question}
+
 """
+
             }
 
         ]
@@ -233,35 +272,60 @@ Question:
     )
 
 
+
     return response.choices[0].message.content, docs
 
 
 
-# ==========================
-# Chat UI
-# ==========================
 
 question = st.chat_input(
-    "Ask hospital policy question..."
+
+    "Ask your question..."
+
 )
+
 
 
 if question:
 
 
-    answer, sources = ask(question)
+    with st.chat_message("user"):
+
+        st.write(question)
 
 
-    st.subheader("Answer")
 
-    st.write(answer)
-
-
-    st.subheader("📚 Sources")
+    with st.chat_message("assistant"):
 
 
-    for s in sources:
+        with st.spinner(
+            "Searching policies..."
+        ):
 
-        st.write(
-            f"📄 {s['source']} | Page {s['page']}"
-        )
+
+            answer, sources = ask(question)
+
+
+
+        st.write(answer)
+
+
+
+        st.divider()
+
+
+        st.subheader("📚 Sources")
+
+
+        for s in sources:
+
+
+            st.write(
+
+                f"""
+📄 {s['source']}
+
+Page: {s['page']}
+"""
+
+            )
