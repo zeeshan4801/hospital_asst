@@ -1,61 +1,22 @@
-# ==========================
-# Secrets / API Keys
-# ==========================
-
+# Secrets
 .env
 .streamlit/secrets.toml
 
 
-# ==========================
-# Python Cache
-# ==========================
-
+# Python cache
 __pycache__/
-*.py[cod]
-*$py.class
+*.pyc
 
 
-# ==========================
-# Virtual Environments
-# ==========================
-
+# Virtual environments
 venv/
-env/
 .venv/
 
 
-# ==========================
-# Jupyter / Colab Files
-# ==========================
-
+# Jupyter
 .ipynb_checkpoints/
 
 
-# ==========================
-# Streamlit Cache
-# ==========================
-
-.streamlit/cache/
-
-
-# ==========================
-# Logs
-# ==========================
-
-*.log
-
-
-# ==========================
-# OS Generated Files
-# ==========================
-
+# OS files
 .DS_Store
 Thumbs.db
-
-
-# ==========================
-# Temporary Files
-# ==========================
-
-*.tmp
-*.temp
