@@ -9,75 +9,114 @@ from sentence_transformers import SentenceTransformer
 from openai import OpenAI
 
 
+# ==========================
+# Page Settings
+# ==========================
 
 st.set_page_config(
     page_title="Hospital AI Assistant",
     page_icon="🏥"
 )
 
-
 st.title("🏥 Hospital Knowledge Assistant")
 
 
+# ==========================
+# Build FAISS if missing
+# ==========================
 
-# -------------------------
-# Create FAISS if missing
-# -------------------------
+FAISS_PATH = "faiss_index/index.faiss"
+CHUNKS_PATH = "faiss_index/chunks.pkl"
 
-if not os.path.exists(
-    "faiss_index/index.faiss"
-):
 
-    with st.spinner(
-        "Creating knowledge base..."
-    ):
+def create_database():
 
-        subprocess.run(
-            ["python","ingest.py"]
+    st.info("Creating knowledge base from PDFs...")
+
+    result = subprocess.run(
+        ["python", "ingest.py"],
+        capture_output=True,
+        text=True
+    )
+
+    if result.returncode != 0:
+
+        st.error(
+            "Ingestion failed:"
         )
 
+        st.code(
+            result.stderr
+        )
+
+        st.stop()
 
 
-# -------------------------
-# Load database
-# -------------------------
+
+if not os.path.exists(FAISS_PATH):
+
+    create_database()
+
+
+
+# After creation check again
+
+if not os.path.exists(FAISS_PATH):
+
+    st.error(
+        """
+FAISS index was not created.
+
+Check:
+1. hospital_knowledge_base folder exists
+2. PDF files are uploaded
+3. ingest.py works
+"""
+    )
+
+    st.stop()
+
+
+
+# ==========================
+# Load Database
+# ==========================
 
 @st.cache_resource
 def load_database():
 
-
-    index=faiss.read_index(
-        "faiss_index/index.faiss"
+    index = faiss.read_index(
+        FAISS_PATH
     )
 
 
     with open(
-        "faiss_index/chunks.pkl",
+        CHUNKS_PATH,
         "rb"
     ) as f:
 
-        chunks=pickle.load(f)
+        chunks = pickle.load(f)
 
 
 
-    model=SentenceTransformer(
+    model = SentenceTransformer(
         "sentence-transformers/all-MiniLM-L6-v2"
     )
 
 
-    return index,chunks,model
+    return index, chunks, model
 
 
 
-index,chunks,model=load_database()
+index, chunks, model = load_database()
 
 
 
-# -------------------------
-# Groq
-# -------------------------
+# ==========================
+# Groq Client
+# ==========================
 
-client=OpenAI(
+client = OpenAI(
 
     api_key=st.secrets["GROQ_API_KEY"],
 
@@ -87,23 +126,27 @@ client=OpenAI(
 
 
 
-def search(question):
+# ==========================
+# Search
+# ==========================
+
+def search_documents(question):
 
 
-    emb=model.encode(
+    embedding = model.encode(
         [question],
         normalize_embeddings=True
     )
 
 
-    emb=np.array(
-        emb
+    embedding = np.array(
+        embedding
     ).astype("float32")
 
 
 
-    scores,ids=index.search(
-        emb,
+    scores, ids = index.search(
+        embedding,
         5
     )
 
@@ -111,11 +154,10 @@ def search(question):
     results=[]
 
 
-    for score,idx in zip(
+    for score, idx in zip(
         scores[0],
         ids[0]
     ):
-
 
         results.append(
             chunks[idx]
@@ -126,10 +168,14 @@ def search(question):
 
 
 
-def answer(question):
+# ==========================
+# Generate Answer
+# ==========================
+
+def ask(question):
 
 
-    docs=search(question)
+    docs = search_documents(question)
 
 
     context=""
@@ -137,7 +183,7 @@ def answer(question):
 
     for d in docs:
 
-        context+=f"""
+        context += f"""
 
 SOURCE:
 {d['source']}
@@ -145,13 +191,15 @@ SOURCE:
 PAGE:
 {d['page']}
 
-TEXT:
+CONTENT:
 {d['text']}
+
+-------------------
 
 """
 
 
-    response=client.chat.completions.create(
+    response = client.chat.completions.create(
 
         model="openai/gpt-oss-120b",
 
@@ -159,39 +207,54 @@ TEXT:
 
         messages=[
 
-        {
-        "role":"system",
-        "content":
-        "Answer only from provided hospital documents."
-        },
+            {
+                "role":"system",
+                "content":
+                "Answer only from hospital documents."
+            },
 
-        {
-        "role":"user",
-        "content":
-        f"{context}\n\nQuestion:{question}"
-        }
+            {
+                "role":"user",
+                "content":
+                f"""
+Context:
+
+{context}
+
+
+Question:
+
+{question}
+"""
+            }
 
         ]
 
     )
 
 
-    return response.choices[0].message.content,docs
+    return response.choices[0].message.content, docs
 
 
 
-question=st.chat_input(
-    "Ask your question..."
+# ==========================
+# Chat UI
+# ==========================
+
+question = st.chat_input(
+    "Ask hospital policy question..."
 )
 
 
 if question:
 
 
-    reply,sources=answer(question)
+    answer, sources = ask(question)
 
 
-    st.write(reply)
+    st.subheader("Answer")
+
+    st.write(answer)
 
 
     st.subheader("📚 Sources")
@@ -200,5 +263,5 @@ if question:
     for s in sources:
 
         st.write(
-            f"{s['source']} - Page {s['page']}"
+            f"📄 {s['source']} | Page {s['page']}"
         )
