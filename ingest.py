@@ -1,10 +1,12 @@
 import os
 import pickle
-import faiss
 import numpy as np
+
+import faiss
 
 from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
+
 
 
 PDF_FOLDER = "hospital_knowledge_base"
@@ -12,20 +14,25 @@ PDF_FOLDER = "hospital_knowledge_base"
 OUTPUT_FOLDER = "faiss_index"
 
 
-def load_pdfs():
+
+def read_pdfs():
 
     documents = []
 
-    for file in os.listdir(PDF_FOLDER):
 
-        if file.endswith(".pdf"):
+    for filename in os.listdir(PDF_FOLDER):
+
+        if filename.lower().endswith(".pdf"):
+
 
             path = os.path.join(
                 PDF_FOLDER,
-                file
+                filename
             )
 
-            print("Reading:", file)
+
+            print("Reading:", filename)
+
 
             reader = PdfReader(path)
 
@@ -34,13 +41,14 @@ def load_pdfs():
 
                 text = page.extract_text()
 
+
                 if text:
 
                     documents.append({
 
                         "text": text,
 
-                        "source": file,
+                        "source": filename,
 
                         "page": page_number + 1
 
@@ -51,25 +59,30 @@ def load_pdfs():
 
 
 
-def split_text(documents):
+def create_chunks(documents):
 
-    chunks=[]
+    chunks = []
+
+    chunk_size = 800
 
 
     for doc in documents:
 
+
         text = doc["text"]
 
 
-        size = 800
+        for i in range(
+            0,
+            len(text),
+            chunk_size
+        ):
 
-
-        for i in range(0,len(text),size):
 
             chunks.append({
 
                 "text":
-                text[i:i+size],
+                text[i:i+chunk_size],
 
                 "source":
                 doc["source"],
@@ -84,78 +97,127 @@ def split_text(documents):
 
 
 
-def create_index(chunks):
+def create_faiss(chunks):
+
+
+    print("Creating embeddings...")
 
 
     model = SentenceTransformer(
+
         "sentence-transformers/all-MiniLM-L6-v2"
+
     )
 
 
-    texts=[
+    texts = [
+
         c["text"]
+
         for c in chunks
+
     ]
 
 
-    embeddings=model.encode(
+    embeddings = model.encode(
+
         texts,
+
         normalize_embeddings=True
+
     )
 
 
-    embeddings=np.array(
+    embeddings = np.array(
+
         embeddings
+
     ).astype("float32")
 
 
 
-    index=faiss.IndexFlatIP(
+    index = faiss.IndexFlatIP(
+
         embeddings.shape[1]
+
     )
 
 
     index.add(
+
         embeddings
+
     )
+
 
 
     os.makedirs(
+
         OUTPUT_FOLDER,
+
         exist_ok=True
+
     )
+
 
 
     faiss.write_index(
+
         index,
+
         "faiss_index/index.faiss"
+
     )
 
 
+
     with open(
+
         "faiss_index/chunks.pkl",
+
         "wb"
+
     ) as f:
 
         pickle.dump(
+
             chunks,
+
             f
+
         )
+
 
 
     print("FAISS created successfully")
 
+    print(
+        "Total chunks:",
+        len(chunks)
+    )
 
 
-if __name__=="__main__":
 
-    docs=load_pdfs()
 
-    chunks=split_text(docs)
+if __name__ == "__main__":
+
+
+    docs = read_pdfs()
+
+
+    print(
+        "Pages:",
+        len(docs)
+    )
+
+
+    chunks = create_chunks(docs)
+
 
     print(
         "Chunks:",
         len(chunks)
     )
 
-    create_index(chunks)
+
+    create_faiss(chunks)
