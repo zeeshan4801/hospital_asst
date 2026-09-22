@@ -1,12 +1,22 @@
+# Secrets
 .env
 .streamlit/secrets.toml
 
+
+# Generated FAISS database
+# Remove this line if you want to upload FAISS manually
+faiss_index/
+
+
+# Python cache
 __pycache__/
 *.pyc
 
-.venv/
+
+# Virtual environment
 venv/
+.venv/
 
-.ipynb_checkpoints/
 
+# System files
 .DS_Store
