@@ -1,7 +1,8 @@
-import streamlit as st
 import os
 import subprocess
 import pickle
+
+import streamlit as st
 import faiss
 import numpy as np
 
@@ -11,41 +12,30 @@ from openai import OpenAI
 
 
 st.set_page_config(
-
     page_title="Hospital AI Assistant",
-
     page_icon="🏥"
-
 )
 
 
 st.title("🏥 Hospital Knowledge Assistant")
 
-st.caption(
-    "Ask questions from hospital policy documents"
-)
+
+
+FAISS_FILE="faiss_index/index.faiss"
+
+CHUNKS_FILE="faiss_index/chunks.pkl"
 
 
 
-FAISS_FILE = "faiss_index/index.faiss"
-
-CHUNKS_FILE = "faiss_index/chunks.pkl"
-
-
-
-# -------------------------
-# Create database if missing
-# -------------------------
+# Create FAISS automatically
 
 if not os.path.exists(FAISS_FILE):
 
-
     with st.spinner(
-        "Building hospital knowledge base..."
+        "Creating hospital knowledge base..."
     ):
 
-
-        result = subprocess.run(
+        result=subprocess.run(
 
             [
                 "python",
@@ -59,72 +49,50 @@ if not os.path.exists(FAISS_FILE):
         )
 
 
-
         if result.returncode != 0:
 
-
             st.error(
-                "Knowledge base creation failed"
-            )
-
-
-            st.code(
                 result.stderr
             )
-
 
             st.stop()
 
 
 
-# -------------------------
 # Load database
-# -------------------------
 
 @st.cache_resource
 def load_database():
 
-
-    index = faiss.read_index(
-
+    index=faiss.read_index(
         FAISS_FILE
-
     )
 
 
     with open(
-
         CHUNKS_FILE,
-
         "rb"
-
     ) as f:
 
-        chunks = pickle.load(f)
+        chunks=pickle.load(f)
 
 
-
-    model = SentenceTransformer(
-
+    model=SentenceTransformer(
         "sentence-transformers/all-MiniLM-L6-v2"
-
     )
 
 
-    return index, chunks, model
+    return index,chunks,model
 
 
 
-
-index, chunks, embedding_model = load_database()
-
+index,chunks,model=load_database()
 
 
-# -------------------------
+
 # Groq
-# -------------------------
 
-client = OpenAI(
+client=OpenAI(
 
     api_key=st.secrets["GROQ_API_KEY"],
 
@@ -134,10 +102,10 @@ client = OpenAI(
 
 
 
-def retrieve(question):
+def search(question):
 
 
-    vector = embedding_model.encode(
+    vector=model.encode(
 
         [question],
 
@@ -146,15 +114,13 @@ def retrieve(question):
     )
 
 
-    vector = np.array(
-
+    vector=np.array(
         vector
-
     ).astype("float32")
 
 
 
-    scores, ids = index.search(
+    scores,ids=index.search(
 
         vector,
 
@@ -166,105 +132,64 @@ def retrieve(question):
     results=[]
 
 
-    for score, idx in zip(
-
+    for score,idx in zip(
         scores[0],
-
         ids[0]
-
     ):
 
 
-        results.append({
-
-            **chunks[idx],
-
-            "score":float(score)
-
-        })
-
+        results.append(
+            chunks[idx]
+        )
 
 
     return results
 
 
 
-
-def ask(question):
-
-
-    docs = retrieve(question)
+def generate_answer(question):
 
 
+    docs=search(question)
 
-    context = ""
 
+    context=""
 
 
     for d in docs:
 
+        context+=f"""
 
-        context += f"""
-
-SOURCE:
+Source:
 {d['source']}
 
-PAGE:
+Page:
 {d['page']}
 
-CONTENT:
+Content:
 {d['text']}
-
------------------
 
 """
 
 
-
-    response = client.chat.completions.create(
-
+    response=client.chat.completions.create(
 
         model="openai/gpt-oss-120b",
 
-
         temperature=0.1,
-
 
         messages=[
 
-
             {
-
             "role":"system",
-
             "content":
-            """
-You are a hospital policy assistant.
-Answer only from provided documents.
-Do not make assumptions.
-"""
-
+            "Answer only from provided hospital documents."
             },
 
-
             {
-
             "role":"user",
-
             "content":
-            f"""
-
-Context:
-
-{context}
-
-
-Question:
-
-{question}
-
-"""
-
+            f"{context}\nQuestion:{question}"
             }
 
         ]
@@ -272,16 +197,12 @@ Question:
     )
 
 
-
     return response.choices[0].message.content, docs
 
 
 
-
-question = st.chat_input(
-
-    "Ask your question..."
-
+question=st.chat_input(
+    "Ask hospital policy question..."
 )
 
 
@@ -289,43 +210,21 @@ question = st.chat_input(
 if question:
 
 
-    with st.chat_message("user"):
-
-        st.write(question)
-
-
-
-    with st.chat_message("assistant"):
+    answer,sources=generate_answer(
+        question
+    )
 
 
-        with st.spinner(
-            "Searching policies..."
-        ):
+    st.write(answer)
 
 
-            answer, sources = ask(question)
+    st.subheader(
+        "📚 Sources"
+    )
 
 
+    for s in sources:
 
-        st.write(answer)
-
-
-
-        st.divider()
-
-
-        st.subheader("📚 Sources")
-
-
-        for s in sources:
-
-
-            st.write(
-
-                f"""
-📄 {s['source']}
-
-Page: {s['page']}
-"""
-
-            )
+        st.write(
+            f"📄 {s['source']} - Page {s['page']}"
+        )
