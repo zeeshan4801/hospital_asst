@@ -1,102 +1,41 @@
-# ingest.py
-
 import os
 import pickle
 import numpy as np
-
-# FAISS import
-try:
-    import faiss
-except ImportError:
-    raise ImportError(
-        "FAISS is not installed. Install faiss-cpu in requirements.txt"
-    )
-
+import faiss
 
 from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
 
 
-
-# ==========================
-# Paths
-# ==========================
-
 PDF_FOLDER = "hospital_knowledge_base"
 
 OUTPUT_FOLDER = "faiss_index"
 
-INDEX_FILE = os.path.join(
-    OUTPUT_FOLDER,
-    "index.faiss"
-)
 
-CHUNKS_FILE = os.path.join(
-    OUTPUT_FOLDER,
-    "chunks.pkl"
-)
-
-
-
-# ==========================
-# Read PDFs
-# ==========================
-
-def load_pdfs():
+def read_documents():
 
     documents = []
 
+    for filename in os.listdir(PDF_FOLDER):
 
-    if not os.path.exists(PDF_FOLDER):
+        if filename.endswith(".pdf"):
 
-        raise FileNotFoundError(
-            f"PDF folder not found: {PDF_FOLDER}"
-        )
+            path = os.path.join(
+                PDF_FOLDER,
+                filename
+            )
 
+            print("Reading:", filename)
 
-    pdf_files = [
-
-        f for f in os.listdir(PDF_FOLDER)
-
-        if f.lower().endswith(".pdf")
-
-    ]
+            reader = PdfReader(path)
 
 
-    if not pdf_files:
-
-        raise FileNotFoundError(
-            "No PDF files found in hospital_knowledge_base folder"
-        )
-
-
-    for filename in pdf_files:
-
-
-        filepath = os.path.join(
-            PDF_FOLDER,
-            filename
-        )
-
-
-        print(
-            f"Reading PDF: {filename}"
-        )
-
-
-        try:
-
-            reader = PdfReader(filepath)
-
-
-            for page_number, page in enumerate(reader.pages):
-
+            for page_no, page in enumerate(reader.pages):
 
                 text = page.extract_text()
 
 
-                if text and text.strip():
-
+                if text:
 
                     documents.append({
 
@@ -104,94 +43,63 @@ def load_pdfs():
 
                         "source": filename,
 
-                        "page": page_number + 1
+                        "page": page_no + 1
 
                     })
 
 
-        except Exception as e:
-
-            print(
-                f"Skipping {filename}: {e}"
-            )
-
-
     print(
-        f"Total pages loaded: {len(documents)}"
+        "Pages loaded:",
+        len(documents)
     )
-
 
     return documents
 
 
 
-# ==========================
-# Split Text
-# ==========================
-
 def create_chunks(documents):
 
+    chunks=[]
 
-    chunks = []
-
-
-    chunk_size = 800
-
-    overlap = 100
-
+    chunk_size=800
 
 
     for doc in documents:
 
-
-        text = doc["text"]
-
-
-        start = 0
+        text=doc["text"]
 
 
-        while start < len(text):
-
-
-            chunk_text = text[
-                start:start + chunk_size
-            ]
+        for i in range(
+            0,
+            len(text),
+            chunk_size
+        ):
 
 
             chunks.append({
 
-                "text": chunk_text,
+                "text":
+                text[i:i+chunk_size],
 
-                "source": doc["source"],
+                "source":
+                doc["source"],
 
-                "page": doc["page"]
+                "page":
+                doc["page"]
 
             })
 
 
-            start += chunk_size - overlap
-
-
-
     print(
-        f"Total chunks created: {len(chunks)}"
+        "Chunks:",
+        len(chunks)
     )
-
 
     return chunks
 
 
 
-# ==========================
-# Create FAISS
-# ==========================
-
-def create_faiss_index(chunks):
-
-
-    print(
-        "Loading embedding model..."
-    )
+def build_faiss(chunks):
 
 
     model = SentenceTransformer(
@@ -199,53 +107,34 @@ def create_faiss_index(chunks):
     )
 
 
-    texts = [
+    texts=[
 
-        item["text"]
+        c["text"]
 
-        for item in chunks
+        for c in chunks
 
     ]
 
 
-    print(
-        "Creating embeddings..."
-    )
-
-
-    embeddings = model.encode(
+    embeddings=model.encode(
 
         texts,
 
-        batch_size=32,
+        normalize_embeddings=True,
 
-        show_progress_bar=True,
-
-        normalize_embeddings=True
+        show_progress_bar=True
 
     )
 
 
-    embeddings = np.array(
+    embeddings=np.array(
         embeddings
     ).astype("float32")
 
 
 
-    print(
-        "Embedding shape:",
-        embeddings.shape
-    )
-
-
-
-    # Create FAISS index
-
-    dimension = embeddings.shape[1]
-
-
-    index = faiss.IndexFlatIP(
-        dimension
+    index=faiss.IndexFlatIP(
+        embeddings.shape[1]
     )
 
 
@@ -254,16 +143,9 @@ def create_faiss_index(chunks):
     )
 
 
-
     os.makedirs(
         OUTPUT_FOLDER,
         exist_ok=True
-    )
-
-
-
-    print(
-        "Saving FAISS index..."
     )
 
 
@@ -271,15 +153,17 @@ def create_faiss_index(chunks):
 
         index,
 
-        INDEX_FILE
+        "faiss_index/index.faiss"
 
     )
 
 
-
     with open(
-        CHUNKS_FILE,
+
+        "faiss_index/chunks.pkl",
+
         "wb"
+
     ) as f:
 
         pickle.dump(
@@ -288,43 +172,18 @@ def create_faiss_index(chunks):
         )
 
 
-
     print(
-        "FAISS index saved successfully"
-    )
-
-
-    print(
-        f"Documents stored: {len(chunks)}"
+        "FAISS created successfully"
     )
 
 
 
-# ==========================
-# Main
-# ==========================
+if __name__=="__main__":
 
-if __name__ == "__main__":
+    docs=read_documents()
 
+    chunks=create_chunks(docs)
 
-    print(
-        "Starting ingestion..."
-    )
+    build_faiss(chunks)
 
-
-    documents = load_pdfs()
-
-
-    chunks = create_chunks(
-        documents
-    )
-
-
-    create_faiss_index(
-        chunks
-    )
-
-
-    print(
-        "DONE ✅"
-    )
+    print("DONE")
