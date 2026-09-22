@@ -7,9 +7,10 @@ from sentence_transformers import SentenceTransformer
 from openai import OpenAI
 
 
-# ==========================
-# Page Setup
-# ==========================
+
+# =========================
+# Page Config
+# =========================
 
 st.set_page_config(
     page_title="Hospital AI Assistant",
@@ -19,55 +20,97 @@ st.set_page_config(
 
 st.title("🏥 Hospital Knowledge Assistant")
 
-st.write(
-    "Ask questions from hospital policy documents."
+st.caption(
+    "AI assistant powered by hospital policy documents"
 )
 
 
-# ==========================
+
+# =========================
 # Groq Client
-# ==========================
+# =========================
+
+if "GROQ_API_KEY" not in st.secrets:
+
+    st.error(
+        "GROQ_API_KEY missing. Add it in Streamlit Secrets."
+    )
+
+    st.stop()
+
+
 
 client = OpenAI(
+
     api_key=st.secrets["GROQ_API_KEY"],
+
     base_url="https://api.groq.com/openai/v1"
+
 )
 
 
 
-# ==========================
+# =========================
 # Load Database
-# ==========================
+# =========================
 
 @st.cache_resource
 def load_database():
 
-    index_path = "faiss_index/index.faiss"
-    chunks_path = "faiss_index/chunks.pkl"
 
+    index_file = "faiss_index/index.faiss"
 
-    # Load FAISS
-
-    index = faiss.read_index(
-        index_path
-    )
-
-
-    # Load chunks
-
-    with open(
-        chunks_path,
-        "rb"
-    ) as file:
-
-        chunks = pickle.load(file)
+    chunks_file = "faiss_index/chunks.pkl"
 
 
 
-    # Load embedding model
+    if not st.session_state.get("checked", False):
+
+        st.session_state.checked = True
+
+
+
+    try:
+
+        index = faiss.read_index(
+            index_file
+        )
+
+
+    except Exception as e:
+
+        st.error(
+            f"FAISS index loading failed: {e}"
+        )
+
+        st.stop()
+
+
+
+    try:
+
+        with open(
+            chunks_file,
+            "rb"
+        ) as f:
+
+            chunks = pickle.load(f)
+
+
+    except Exception as e:
+
+        st.error(
+            f"chunks.pkl loading failed: {e}"
+        )
+
+        st.stop()
+
+
 
     model = SentenceTransformer(
+
         "sentence-transformers/all-MiniLM-L6-v2"
+
     )
 
 
@@ -75,35 +118,45 @@ def load_database():
 
 
 
-index, chunks, model = load_database()
+
+index, chunks, embedding_model = load_database()
 
 
 
-# ==========================
-# Search Documents
-# ==========================
+# =========================
+# Retrieve Documents
+# =========================
 
-def search_documents(question):
+def retrieve(question, top_k=5):
 
 
-    embedding = model.encode(
+    vector = embedding_model.encode(
+
         [question],
+
         normalize_embeddings=True
+
     )
 
 
-    embedding = np.array(
-        embedding
+    vector = np.array(
+        vector
     ).astype("float32")
 
 
+
     scores, ids = index.search(
-        embedding,
-        5
+
+        vector,
+
+        top_k
+
     )
 
 
+
     results=[]
+
 
 
     for score, idx in zip(
@@ -111,12 +164,15 @@ def search_documents(question):
         ids[0]
     ):
 
+
         doc = chunks[idx]
 
 
         results.append({
 
-            "text": doc.page_content,
+            "text":
+            doc.page_content,
+
 
             "source":
             doc.metadata.get(
@@ -124,11 +180,13 @@ def search_documents(question):
                 "Unknown"
             ),
 
+
             "page":
             doc.metadata.get(
                 "page",
                 "Unknown"
             ),
+
 
             "score":
             float(score)
@@ -140,22 +198,23 @@ def search_documents(question):
 
 
 
-# ==========================
+# =========================
 # Generate Answer
-# ==========================
+# =========================
 
 def generate_answer(question):
 
 
-    docs = search_documents(
-        question
-    )
+    docs = retrieve(question)
+
 
 
     context = ""
 
 
+
     for doc in docs:
+
 
         context += f"""
 
@@ -165,36 +224,56 @@ SOURCE:
 PAGE:
 {doc['page']}
 
+
 CONTENT:
+
 {doc['text']}
 
-------------------
+------------------------
 
 """
+
 
 
     response = client.chat.completions.create(
 
+
         model="openai/gpt-oss-120b",
+
 
         temperature=0.1,
 
+
         messages=[
 
+
             {
+
                 "role":"system",
+
                 "content":
                 """
 You are a hospital policy assistant.
+
 Answer only from provided documents.
+
 Do not invent information.
+
+If the answer is unavailable,
+say:
+'I could not find this information in the hospital knowledge base.'
 """
+
             },
 
+
             {
+
                 "role":"user",
+
                 "content":
                 f"""
+
 Context:
 
 {context}
@@ -203,7 +282,9 @@ Context:
 Question:
 
 {question}
+
 """
+
             }
 
         ]
@@ -211,22 +292,50 @@ Question:
     )
 
 
+
     return response.choices[0].message.content, docs
 
 
 
-# ==========================
-# Chat UI
-# ==========================
+# =========================
+# Chat Interface
+# =========================
+
+if "messages" not in st.session_state:
+
+    st.session_state.messages=[]
+
+
+
+for message in st.session_state.messages:
+
+
+    with st.chat_message(
+        message["role"]
+    ):
+
+        st.write(
+            message["content"]
+        )
+
 
 
 question = st.chat_input(
-    "Ask a hospital policy question..."
+    "Ask hospital policy question..."
 )
 
 
 
 if question:
+
+
+    st.session_state.messages.append({
+
+        "role":"user",
+
+        "content":question
+
+    })
 
 
     with st.chat_message("user"):
@@ -239,7 +348,7 @@ if question:
 
 
         with st.spinner(
-            "Searching policies..."
+            "Searching documents..."
         ):
 
 
@@ -248,33 +357,60 @@ if question:
             )
 
 
+
         st.write(answer)
+
 
 
         st.divider()
 
-        st.subheader("📚 Sources")
+
+        st.subheader(
+            "📚 Source Documents"
+        )
 
 
         shown=set()
 
 
-        for s in sources:
+
+        for source in sources:
 
 
-            name = (
-                s["source"],
-                s["page"]
+            key=(
+
+                source["source"],
+
+                source["page"]
+
             )
 
 
-            if name not in shown:
+            if key not in shown:
+
 
                 st.write(
+
                     f"""
-📄 {s['source']}  
-Page: {s['page']}
+📄 **{source['source']}**
+
+Page: {source['page']}
+
+Similarity:
+{source['score']:.3f}
 """
+
                 )
 
-                shown.add(name)
+
+                shown.add(key)
+
+
+
+    st.session_state.messages.append({
+
+        "role":"assistant",
+
+        "content":answer
+
+    })
