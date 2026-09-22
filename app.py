@@ -7,21 +7,26 @@ from sentence_transformers import SentenceTransformer
 from openai import OpenAI
 
 
-
-# ==============================
-# Page Configuration
-# ==============================
+# ==========================
+# Page Setup
+# ==========================
 
 st.set_page_config(
-    page_title="Hospital Knowledge Assistant",
-    page_icon="🏥",
-    layout="centered"
+    page_title="Hospital AI Assistant",
+    page_icon="🏥"
 )
 
 
-# ==============================
+st.title("🏥 Hospital Knowledge Assistant")
+
+st.write(
+    "Ask questions from hospital policy documents."
+)
+
+
+# ==========================
 # Groq Client
-# ==============================
+# ==========================
 
 client = OpenAI(
     api_key=st.secrets["GROQ_API_KEY"],
@@ -30,85 +35,103 @@ client = OpenAI(
 
 
 
-# ==============================
-# Load FAISS Database
-# ==============================
+# ==========================
+# Load Database
+# ==========================
 
 @st.cache_resource
 def load_database():
 
+    index_path = "faiss_index/index.faiss"
+    chunks_path = "faiss_index/chunks.pkl"
+
+
+    # Load FAISS
+
     index = faiss.read_index(
-        "faiss_index/index.faiss"
+        index_path
     )
 
 
+    # Load chunks
+
     with open(
-        "faiss_index/chunks.pkl",
+        chunks_path,
         "rb"
-    ) as f:
+    ) as file:
 
-        chunks = pickle.load(f)
+        chunks = pickle.load(file)
 
 
-    embedding_model = SentenceTransformer(
+
+    # Load embedding model
+
+    model = SentenceTransformer(
         "sentence-transformers/all-MiniLM-L6-v2"
     )
 
 
-    return index, chunks, embedding_model
+    return index, chunks, model
 
 
 
-index, chunks, embedding_model = load_database()
+index, chunks, model = load_database()
 
 
 
-# ==============================
-# Retrieve Relevant Chunks
-# ==============================
+# ==========================
+# Search Documents
+# ==========================
 
-def retrieve_documents(question, top_k=5):
+def search_documents(question):
 
 
-    query_embedding = embedding_model.encode(
+    embedding = model.encode(
         [question],
         normalize_embeddings=True
     )
 
 
+    embedding = np.array(
+        embedding
+    ).astype("float32")
+
+
     scores, ids = index.search(
-        np.array(query_embedding),
-        top_k
+        embedding,
+        5
     )
 
 
-    results = []
+    results=[]
 
 
-    for score, idx in zip(scores[0], ids[0]):
+    for score, idx in zip(
+        scores[0],
+        ids[0]
+    ):
 
         doc = chunks[idx]
 
 
         results.append({
 
-            "content":
-                doc.page_content,
+            "text": doc.page_content,
 
             "source":
-                doc.metadata.get(
-                    "source",
-                    "Unknown"
-                ),
+            doc.metadata.get(
+                "source",
+                "Unknown"
+            ),
 
             "page":
-                doc.metadata.get(
-                    "page",
-                    "Unknown"
-                ),
+            doc.metadata.get(
+                "page",
+                "Unknown"
+            ),
 
             "score":
-                float(score)
+            float(score)
 
         })
 
@@ -117,20 +140,22 @@ def retrieve_documents(question, top_k=5):
 
 
 
-# ==============================
+# ==========================
 # Generate Answer
-# ==============================
+# ==========================
 
 def generate_answer(question):
 
 
-    documents = retrieve_documents(question)
+    docs = search_documents(
+        question
+    )
 
 
     context = ""
 
 
-    for doc in documents:
+    for doc in docs:
 
         context += f"""
 
@@ -141,38 +166,9 @@ PAGE:
 {doc['page']}
 
 CONTENT:
-{doc['content']}
+{doc['text']}
 
-----------------------
-
-"""
-
-
-
-    prompt = f"""
-
-You are a hospital policy assistant.
-
-Answer the user question ONLY using the provided context.
-
-Rules:
-
-- Do not invent information.
-- Do not use outside knowledge.
-- If the answer is not found, say:
-"I could not find this information in the hospital knowledge base."
-
-Provide a clear professional answer.
-
-
-CONTEXT:
-
-{context}
-
-
-QUESTION:
-
-{question}
+------------------
 
 """
 
@@ -181,66 +177,48 @@ QUESTION:
 
         model="openai/gpt-oss-120b",
 
+        temperature=0.1,
+
         messages=[
 
             {
                 "role":"system",
                 "content":
-                "You are an accurate hospital knowledge assistant."
+                """
+You are a hospital policy assistant.
+Answer only from provided documents.
+Do not invent information.
+"""
             },
 
             {
                 "role":"user",
-                "content":prompt
+                "content":
+                f"""
+Context:
+
+{context}
+
+
+Question:
+
+{question}
+"""
             }
 
-        ],
-
-        temperature=0.1
+        ]
 
     )
 
 
-    return (
-        response.choices[0].message.content,
-        documents
-    )
+    return response.choices[0].message.content, docs
 
 
 
-# ==============================
-# UI
-# ==============================
+# ==========================
+# Chat UI
+# ==========================
 
-st.title("🏥 Hospital Knowledge Assistant")
-
-st.caption(
-    "Ask questions from hospital policies and standards"
-)
-
-
-
-if "messages" not in st.session_state:
-
-    st.session_state.messages = []
-
-
-
-# Display chat history
-
-for message in st.session_state.messages:
-
-    with st.chat_message(
-        message["role"]
-    ):
-
-        st.write(
-            message["content"]
-        )
-
-
-
-# User Input
 
 question = st.chat_input(
     "Ask a hospital policy question..."
@@ -249,15 +227,6 @@ question = st.chat_input(
 
 
 if question:
-
-
-    st.session_state.messages.append({
-
-        "role":"user",
-
-        "content":question
-
-    })
 
 
     with st.chat_message("user"):
@@ -270,7 +239,7 @@ if question:
 
 
         with st.spinner(
-            "Searching hospital knowledge base..."
+            "Searching policies..."
         ):
 
 
@@ -282,43 +251,30 @@ if question:
         st.write(answer)
 
 
-
         st.divider()
-
 
         st.subheader("📚 Sources")
 
 
-        unique_sources = set()
+        shown=set()
 
 
-        for source in sources:
+        for s in sources:
 
 
-            source_name = (
-                source["source"],
-                source["page"]
+            name = (
+                s["source"],
+                s["page"]
             )
 
 
-            if source_name not in unique_sources:
+            if name not in shown:
 
                 st.write(
-                    f"📄 **{source['source']}**  \n"
-                    f"Page: {source['page']}  \n"
-                    f"Similarity: {source['score']:.3f}"
+                    f"""
+📄 {s['source']}  
+Page: {s['page']}
+"""
                 )
 
-
-                unique_sources.add(
-                    source_name
-                )
-
-
-    st.session_state.messages.append({
-
-        "role":"assistant",
-
-        "content":answer
-
-    })
+                shown.add(name)
