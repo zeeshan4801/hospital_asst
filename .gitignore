@@ -1,22 +1,16 @@
-# Secrets
-.env
-.streamlit/secrets.toml
-
-
-# Generated FAISS database
-# Remove this line if you want to upload FAISS manually
+# FAISS generated files
 faiss_index/
 
+# Streamlit secrets
+.streamlit/secrets.toml
 
 # Python cache
 __pycache__/
 *.pyc
 
-
 # Virtual environment
 venv/
 .venv/
 
-
-# System files
+# OS files
 .DS_Store
